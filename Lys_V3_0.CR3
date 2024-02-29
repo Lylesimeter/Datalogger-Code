@@ -1,0 +1,523 @@
+'CR3000 Series Datalogger
+'
+'Ver 3.0 converted from SiteName V2.7b by Brad Lyles 20220104
+' General Notes
+'  Lysimeter 1 is a Gen 1 design equipped with one CS616 soil sensor
+'  Lysimeter 2 is a Gen 2 design equipped with two CS650 soil sensors
+'  Globally change "SiteName" to reflect a specific site name.
+'  Stage 3 is water level in a nearby monitoring well.
+'
+'  Datalogger Channels used
+'8H  - differential load cell in lysimeter 1
+'8L  - differential load cell in lysimeter 1
+'VX1 - load cell in lysimeter 1
+'9H  - differential load cell in lysimeter 2
+'9L  - differential load cell in lysimeter 2
+'VX4 - load cell in lysimeter 1
+'1H  - differential thermocouple in lysimeter 1
+'1L  - differential thermocouple in lysimeter 1
+'2H  - differential thermocouple in lysimeter 2
+'2L  - differential thermocouple in lysimeter 2
+'3H  - differential thermocouple in discharge area
+'3L  - differential thermocouple in discharge area
+'
+'C1  - CS451 pressure transducers 1
+'C2
+'C3  - CS451 pressure transducer 2
+'C4
+'C5  - CS655 soil moisture sensors 1 & 2 in Lysimeter 1
+'C6
+'C7  - CS655 soil moisture sensors 3 & 4 in Lysimeter 2
+'C8
+'
+Const PI = 3.141592654
+
+Public PTemp, Batt_volt
+Public Tare1 As Boolean
+Public Tare2 As Boolean
+Public Calib As Boolean
+Public reset_Stage1 As Boolean
+Public reset_Stage2 As Boolean
+Public manual_reset_Stage1 As Boolean
+Public manual_reset_Stage2 As Boolean
+
+Public SiteID As String
+
+Public File_Current As Long, CloseStat
+Public LastUpdate As String * 35, Readfile_result, Writefile_result
+Dim time(9)
+Public Update_time As String * 35, Update_Current_manual As Boolean
+
+Public i
+Public mV1_avg, known1_gm, mV1_SD, LC1_mult
+Public mV2_avg, known2_gm, mV2_SD, LC2_mult
+
+Public Lys1_Mass_gm, Tare1_gm, Lys1_Area_cm2, Lys1_ET_Flux_mm, Lys1_Flux_mm
+Public Lys2_Mass_gm, Tare2_gm, Lys2_Area_cm2, Lys2_ET_Flux_mm, Lys2_Flux_mm
+
+Public TC_LoadCell1, TC_LoadCell2, TC_3
+
+'Druck pressure tansducers
+Public Stage1_mV, Stage2_mV, Stage1_cm, Stage2_cm, Stage3_mV, Stage3_cm
+Public Lvl1_cm, Lvl2_cm, Temp1_C, Temp2_C
+
+Public stage1_datum, stage2_datum, stage3_datum
+Public Trans1_mult, Trans2_mult
+Public Stage1_trigger_cm, Stage2_trigger_cm
+Public old_Drain1_ml, old_Drain2_ml, delta_Drain1_ml, delta_Drain2_ml
+Public Drain1_ml, cum_Drain1_ml, Lys1_Drain_Flux_mm
+Public Drain2_ml, cum_Drain2_ml, Lys2_Drain_Flux_mm
+Public Pump1_time_sec, Pump2_time_sec
+Public Pump1_status As Boolean, Pump2_status As Boolean
+Public Pump1_manual As Boolean, Pump2_manual As Boolean
+Public Pump1_man_status As Boolean, Pump2_man_status As Boolean
+Public Pump_Ready As Boolean
+Public stage1_delay_sec, stage2_delay_sec
+
+'CS655 sensors
+Public CS655_1(6), CS655_2(6), CS655_3(6), CS655_4(6)
+Public Soil_VWC(4), Soil_EC(4), Soil_T(4), Soil_P(4), Soil_PA(4), Soil_VR(4)
+
+Units Soil_VWC=m^3/m^3
+Units Soil_EC=dS/m
+Units Soil_T=Deg C
+Units Soil_P=unitless
+Units Soil_PA=nSec
+Units Soil_VR=unitless
+
+'CS616
+Public Soil_VWC1, Soil_PA1
+
+Public Message As String * 100
+
+Public mV1(100), mV2(100)
+
+'Define Data Tables.
+DataTable (Daily,1,-1)
+  DataInterval (0,1,Day,10)
+  CardOut (0,365)
+  Sample (1,SiteID,String)
+  Average (1,Lys1_Flux_mm,IEEE4,False)
+  Average (1,Lys1_ET_Flux_mm,IEEE4,False)
+  Average (1,Lys1_Drain_Flux_mm,IEEE4,False)
+  Average (1,Soil_VWC(1),FP2,False)
+  Average (1,Soil_VWC(2),FP2,False)
+  Average (1,Lys2_Flux_mm,IEEE4,False)
+  Average (1,Lys2_ET_Flux_mm,IEEE4,False)
+  Average (1,Lys2_Drain_Flux_mm,IEEE4,False)
+  Average (1,Soil_VWC(3),FP2,False)
+  Average (1,Soil_VWC(4),FP2,False)
+EndTable
+
+DataTable (FifteenMin,1,-1) 'Set table size to # of records, or -1 to autoallocate.
+  DataInterval (0,15,Min,10)
+  CardOut (0 ,-1 )
+  Sample (1,SiteID,String)
+  Average (1,Lys1_Mass_gm,IEEE4,False)
+  Average (1,Lys2_Mass_gm,IEEE4,False)
+  Average (1,Lys1_ET_Flux_mm,IEEE4,False)
+  Average (1,Lys2_ET_Flux_mm,IEEE4,False)
+  Average (1,Lys1_Drain_Flux_mm,IEEE4,False)
+  Average (1,Lys2_Drain_Flux_mm,IEEE4,False)
+  Average (1,Lys1_Flux_mm,IEEE4,False)
+  Average (1,Lys2_Flux_mm,IEEE4,False)
+  Average (1,TC_LoadCell1,IEEE4,False)
+  Average (1,TC_LoadCell2,IEEE4,False)
+  Average (1,TC_3,IEEE4,False)
+  Average (1,mV1_avg,IEEE4,False)
+  Average (1,mV2_avg,IEEE4,False)
+  Average (1,Lvl1_cm,FP2,False)
+  Average (1,Lvl2_cm,FP2,False)
+  Average (1,Temp1_C,FP2,False)
+  Average (1,Temp2_C,FP2,False)
+  Average (1,Drain1_ml,FP2,False)
+  Average (1,cum_Drain1_ml,FP2,False)
+  Average (1,Drain2_ml,FP2,False)
+  Average (1,cum_Drain2_ml,FP2,False)
+  Average (1,PTemp,FP2,False)
+  Minimum (1,Batt_volt,FP2,False,False)
+  Average(4,Soil_VWC(),FP2,False)
+  Average(4,Soil_EC(),FP2,False)
+  Average(4,Soil_T(),FP2,False)
+  Average(4,Soil_P(),FP2,False)
+  Average(4,Soil_PA(),FP2,false)
+  Average(4,Soil_VR(),FP2,false)
+  Average (1,Stage3_cm,FP2,False)
+EndTable
+
+DataTable (TenSec,Calib,-1) 'Set table size to # of records, or -1 to autoallocate.
+  DataInterval (0,10,Sec,10)
+  Average (1,mV1_avg,IEEE4,False)
+  Average (1,mV1_SD,FP2,False)
+  Average (1,known1_gm,FP2,False)
+  Sample (1,TC_LoadCell1,IEEE4)
+  Average (1,mV2_avg,IEEE4,False)
+  Average (1,mV2_SD,FP2,False)
+  Average (1,known2_gm,FP2,False)
+  Sample (1,TC_LoadCell2,IEEE4)
+EndTable
+
+DataTable (Event_Log,1,240)
+  CardOut (0,2400)
+  Sample (1,Message,String)
+EndTable
+
+Sub SendLog (Msg As String *100)
+  Message = Msg
+  CallTable (Event_Log)
+  Message = " "
+EndSub
+
+Function float2string(val) As String * 20
+  Public nchar
+  float2string = val+CHR(32)
+  nchar = Len(float2string)
+EndFunction
+
+Sub Update_CurrentFile()'  Write current conditions to SiteName_current.txt
+  File_Current = FileOpen("CPU:SiteName_current.txt","a",0)
+  RealTime (time(1))
+  Update_time = time(1)+"-"+time(2)+"-"+time(3)+"_"+time(4)+":"+time(5)+":"+time(6)+CHR(32)
+  Writefile_result = FileWrite(File_Current,Update_time,18)
+  Writefile_result = FileWrite(File_Current,float2string(LC1_mult),nchar)
+  Writefile_result = FileWrite(File_Current,float2string(LC2_mult),nchar)
+  Writefile_result = FileWrite(File_Current,float2string(Trans1_mult),nchar)
+  Writefile_result = FileWrite(File_Current,float2string(Trans2_mult),nchar)
+  Writefile_result = FileWrite(File_Current,float2string(Lys1_Area_cm2),nchar)
+  Writefile_result = FileWrite(File_Current,float2string(Lys2_Area_cm2),nchar)
+  Writefile_result = FileWrite(File_Current,float2string(Tare1_gm),nchar)
+  Writefile_result = FileWrite(File_Current,float2string(Tare2_gm),nchar)
+  Writefile_result = FileWrite(File_Current,float2string(stage1_datum),nchar)
+  Writefile_result = FileWrite(File_Current,float2string(stage2_datum),nchar)
+  Writefile_result = FileWrite(File_Current,float2string(cum_Drain1_ml),nchar)
+  Writefile_result = FileWrite(File_Current,float2string(cum_Drain2_ml),nchar)
+  Writefile_result = FileWrite(File_Current,float2string(Stage1_trigger_cm),nchar)
+  Writefile_result = FileWrite(File_Current,float2string(Stage2_trigger_cm),nchar)
+  Writefile_result = FileWrite(File_Current,float2string(Pump1_time_sec),nchar)
+  Writefile_result = FileWrite(File_Current,float2string(Pump2_time_sec),nchar)
+  Call SendLog ("Current conditions where updated at CPU:SiteName_current.txt")
+  CloseStat = FileClose(File_Current)
+  Update_Current_manual = False
+EndSub
+
+Public cf_array(17) As String *20, current_chr As String *2000
+Public FirstPass As Boolean
+
+'Main Program
+BeginProg
+
+  SiteID = "SiteName"
+
+  Call SendLog (SiteID)
+  Call SendLog ("Program Restarted")
+
+  File_Current = FileOpen("CPU:SiteName_current.txt","r",0)' Read initial condtions from SiteName_current.txt
+  Readfile_result = FileRead(File_Current,current_chr,2000)
+  SplitStr (cf_array(),current_chr," ",17,5)
+  LastUpdate = cf_array(1)
+  
+  If (Readfile_result < 1) Then Call SendLog ("Read error from CPU:SiteName_current.txt")
+
+  If (Readfile_result > 0) Then
+    LC1_mult = cf_array(2)
+    LC2_mult = cf_array(3)
+    Trans1_mult = cf_array(4)
+    Trans2_mult = cf_array(5)
+    Lys1_Area_cm2 = cf_array(6)
+    Lys2_Area_cm2 = cf_array(7)
+    Tare1_gm = cf_array(8)
+    Tare2_gm = cf_array(9)
+    stage1_datum = cf_array(10)
+    stage2_datum = cf_array(11)
+    cum_Drain1_ml = cf_array(12)
+    cum_Drain2_ml = cf_array(13)
+    Stage1_trigger_cm = cf_array(14)
+    Stage2_trigger_cm = cf_array(15)
+    Pump1_time_sec = cf_array(16)
+    Pump2_time_sec = cf_array(17)
+    Call SendLog ("Initial conditions from CPU:SiteName_current.txt")
+  Else
+    ' If all else fails, read initial conditions from the program
+    ' Load Cell
+    LC1_mult = 77.717
+    LC2_mult = 104.06
+    ' Stage transducer
+    Trans1_mult = 79.075
+    Trans2_mult = 79.075
+
+    Lys1_Area_cm2 = ((18*2.54)/2)^2 * PI
+    Lys2_Area_cm2 = ((18*2.54)/2)^2 * PI
+
+    Tare1_gm = 55432.80  'initial values in July 2020
+    Tare2_gm = -3570.759 'initial values on 5/5/2021
+
+    stage1_datum = -1.015824  'values as of 20220103
+    stage2_datum = -1.249384  'values as of 20220103
+
+    cum_Drain1_ml = 6904.9  'values as of 20220103
+    cum_Drain2_ml = 1250.9  'values as of 20220103
+
+    Stage1_trigger_cm = 20
+    Stage2_trigger_cm = 20
+
+    Pump1_time_sec = -10
+    Pump2_time_sec = -10
+
+    Call SendLog ("Initial conditions from program")
+    Call Update_CurrentFile()
+    
+  EndIf
+  FileClose(File_Current)
+  
+  stage3_datum = 0
+
+  Call SendLog ("Tare1_gm =" + FormatFloat(Tare1_gm,"%8.1f"))
+  Call SendLog ("Tare2_gm =" + FormatFloat(Tare2_gm,"%8.1f"))
+  Call SendLog ("Stage1 Datum =" + FormatFloat(stage1_datum,"%5.2f"))
+  Call SendLog ("Stage2 Datum =" + FormatFloat(stage2_datum,"%5.2f"))
+  
+  FirstPass = True
+
+  Scan (10,Sec,0,0)
+    PanelTemp (PTemp,60)
+    Battery (Batt_volt)
+    
+    If (Update_Current_manual) Then Call Update_CurrentFile()
+    
+    If (TimeIntoInterval (0,15,Min)) Then Pump_Ready = True
+    If (Batt_volt < 12) Then Pump_Ready = False  'Don't run on pump when battery is low.
+
+    stage1_delay_sec = Timer(1,Sec,4)
+    stage2_delay_sec = Timer(2,Sec,4)
+    
+    'Measure load cells
+    For i=1 To 100
+      BrFull (mV1(i),1,mV20,8,Vx1,1,5000,True ,True ,0,250,1000.,0.0)
+      BrFull (mV2(i),1,mV20,9,Vx4,1,5000,True ,True ,0,250,1000.,0.0)
+    Next i
+
+    'Compute load cell spatial statistics
+    AvgSpa (mV1_avg,100,mV1())
+    StdDevSpa (mV1_SD,100,mV1())
+    AvgSpa (mV2_avg,100,mV2())
+    StdDevSpa (mV2_SD,100,mV2())
+
+    'Measure lysimeter drainage
+    'Druck Pressure Transducer measurements
+    BrFull (Stage1_mV,1,AutoRange,13,Vx2,1,2500,True ,True ,0,250,1.0,0)
+    BrFull (Stage2_mV,1,AutoRange,12,Vx3,1,2500,True ,True ,0,250,1.0,0)
+    BrFull (Stage3_mV,1,AutoRange,14,Vx3,1,2500,True ,True ,0,250,1.0,0)
+    Lvl1_cm = Stage1_mV * 29.911 ' sn 871
+    Lvl2_cm = Stage2_mV * 30.449 ' sn 872
+    Stage3_cm = Stage3_mV * 29.929 + stage3_datum ' sn 874
+    Temp1_C = NaN
+    Temp2_C = NaN
+    
+    Stage1_cm = Lvl1_cm - stage1_datum
+    Stage2_cm = Lvl2_cm - stage2_datum
+
+    'Drainage Calcs
+    '  compute volume of fluid in drainage stilling well, with the pump
+    ' and transducer installed.
+    Drain1_ml = Stage1_cm * Trans1_mult
+    Drain2_ml = Stage2_cm * Trans2_mult
+
+    If (FirstPass) Then
+      old_Drain1_ml = Drain1_ml
+      old_Drain2_ml = Drain2_ml
+      Call SendLog ("Initial Drain1_ml =" + FormatFloat(Drain1_ml,"%5.2f"))
+      Call SendLog ("Initial Drain2_ml =" + FormatFloat(Drain2_ml,"%5.2f"))
+      'reset_Stage1 = True
+      'reset_Stage2 = True
+    EndIf
+
+    ' Reset stage datum and drainage volume datum
+    If (reset_Stage1 = True AND stage1_delay_sec > 20 OR manual_reset_Stage1 = True) Then
+      reset_Stage1 = False
+      stage1_datum = Lvl1_cm
+      Call SendLog ("Stage 1 datum was reset =" + FormatFloat(stage1_datum,"%5.2f"))
+      Stage1_cm = Lvl1_cm - stage1_datum
+      Drain1_ml = Stage1_cm * Trans1_mult
+      old_Drain1_ml = Drain1_ml
+      Call SendLog ("old Drain 1(ml) was reset =" + FormatFloat(Drain1_ml,"%5.2f"))
+      Timer(1,Sec,1)
+      Call Update_CurrentFile()
+    EndIf
+    If (reset_Stage2 = True AND stage2_delay_sec > 20 OR manual_reset_Stage2 = True) Then
+      reset_Stage2 = False
+      stage2_datum = Lvl2_cm
+      Call SendLog ("Stage 2 datum was reset =" + FormatFloat(stage2_datum,"%5.2f"))
+      Stage2_cm = Lvl2_cm - stage2_datum
+      Drain2_ml = Stage2_cm * Trans2_mult
+      old_Drain2_ml = Drain2_ml
+      Call SendLog ("old Drain 2 (ml) was reset =" + FormatFloat(Drain2_ml,"%5.2f"))
+      Timer(2,Sec,1)
+      Call Update_CurrentFile()
+    EndIf
+
+    ' Add new drainage volume to previously accumulated drainage.
+    delta_Drain1_ml = Drain1_ml - old_Drain1_ml
+    If (delta_Drain1_ml > 5) Then
+      cum_Drain1_ml = cum_Drain1_ml + delta_Drain1_ml
+      old_Drain1_ml = Drain1_ml
+      Call SendLog ("Cum Drain 1 =" + FormatFloat(cum_Drain1_ml,"%5.2f"))
+      Call Update_CurrentFile()
+    EndIf
+    delta_Drain2_ml = Drain2_ml - old_Drain2_ml
+    If (delta_Drain2_ml > 5) Then
+      cum_Drain2_ml = cum_Drain2_ml + delta_Drain2_ml
+      old_Drain2_ml = Drain2_ml
+      Call SendLog ("Cum Drain 2 =" + FormatFloat(cum_Drain2_ml,"%5.2f"))
+      Call Update_CurrentFile()
+    EndIf
+
+    ' Compute drainage flux
+    Lys1_Drain_Flux_mm = cum_Drain1_ml / Lys1_Area_cm2 * 10  'gm * 1 cc/gm / cm^2 * 10mm/cm
+    Lys2_Drain_Flux_mm = cum_Drain2_ml / Lys2_Area_cm2 * 10
+
+    ' Pump control
+    '  turn on Pump#1 if Stage1 > Stage1_trigger_cm
+    '  check every 15 minutes
+    If (Pump_Ready = True AND Stage1_cm > Stage1_trigger_cm AND Pump1_status = False) Then
+      SW12 (1,1 )
+      Pump1_status = True
+      Call SendLog ("Pump 1 turned ON because stage was greater than stage trigger")
+      Call SendLog ("Stage 1 (cm) =" + FormatFloat(Stage1_cm,"%5.2f"))
+      Call SendLog ("Stage 1 trigger (cm) =" + FormatFloat(Stage1_trigger_cm,"%5.2f"))
+    EndIf
+    If (Pump1_manual = True AND Pump1_man_status = False) Then
+      SW12 (1,1 )
+      Pump1_man_status = True
+      Call SendLog ("Pump 1 manually turned ON")
+    End If
+    If (Pump1_manual = False AND Pump1_man_status = True) Then
+      SW12 (1,0 )
+      Pump1_man_status = False
+      Call SendLog ("Pump 1 manually turned OFF")
+    End If
+
+    If (Pump1_status = True) Then
+      Pump1_time_sec = Pump1_time_sec + 10
+      If(Pump1_time_sec > 20 OR Stage1_cm < 5) Then
+        SW12 (1,0)
+        Call SendLog ("Pump 1 turned Off")
+        Call SendLog ("Pump 1 time(sec) =" + FormatFloat(Pump1_time_sec,"%5.1f"))
+        Call SendLog ("Stage 1 (cm) =" + FormatFloat(Stage1_cm,"%5.2f"))
+        Pump1_status = False
+        Pump1_time_sec = -10
+        reset_Stage1 = True
+        Timer(1,Sec,2)
+      EndIf
+    EndIf
+    '  turn on Pump#2 if Stage2 > Stage2_trigger_cm
+    '  check every 15 minutes
+
+    If (Pump_Ready = True AND Stage2_cm > Stage2_trigger_cm AND Pump2_status = False) Then
+      SW12 (2,1 )
+      Pump2_status = True
+      Call SendLog ("Pump 2 turned ON because stage was greater than stage trigger")
+      Call SendLog ("Stage 2 (cm) =" + FormatFloat(Stage2_cm,"%5.2f"))
+      Call SendLog ("Stage 2 trigger (cm) =" + FormatFloat(Stage2_trigger_cm,"%5.2f"))
+    EndIf
+    If (Pump2_manual = True AND Pump2_man_status = False) Then
+      SW12 (2,1 )
+      Pump2_man_status = True
+      Call SendLog ("Pump 2 manually turned ON")
+    End If
+    If (Pump2_manual = False AND Pump2_man_status = True) Then
+      SW12 (2,0 )
+      Pump2_man_status = False
+      Call SendLog ("Pump 2 manually turned OFF")
+    End If
+    If (Pump2_status = True) Then
+      Pump2_time_sec = Pump2_time_sec + 10
+      If (Pump2_time_sec > 20 OR Stage2_cm < 5) Then
+        SW12 (2,0)
+        Call SendLog ("Pump 2 turned Off")
+        Call SendLog ("Pump 2 time (sec) =" + FormatFloat(Pump2_time_sec,"%5.1f"))
+        Call SendLog ("Stage 2 (cm) =" + FormatFloat(Stage2_cm,"%5.2f"))
+        Pump2_status = False
+        Pump2_time_sec = -10
+        reset_Stage2 = True
+        Timer(2,Sec,2)
+      EndIf
+    EndIf
+    
+    'Measure lysimeter soil moisture content
+    CS616 (Soil_PA1,1,7,1,1,1.0,0)
+    'CS616 (Soil_PA2,1,8,1,1,1.0,0)
+    If (Soil_PA1 = NaN) Then Soil_PA1 = 15.93
+    'If (Soil_PA2 = NaN) Then Soil_PA2 = 15.93
+    Soil_VWC1 = 0.0007*Soil_PA1^2-0.0063*Soil_PA1-0.0663
+    'Soil_VWC2 = 0.0007*Soil_PA2^2-0.0063*Soil_PA2-0.0663
+    'CS655 sensors
+    If TimeIntoInterval(0,15,Min) Then
+      SDI12Recorder(CS655_1(),1,"1","M4!",1,0,-1)
+      SDI12Recorder(CS655_2(),1,"2","M4!",1,0,-1)
+      SDI12Recorder(CS655_3(),3,"3","M4!",1,0,-1)  'soil lower
+      SDI12Recorder(CS655_4(),3,"4","M4!",1,0,-1)  'soil upper
+    EndIf
+    Soil_VWC(3) = CS655_3(1)
+    Soil_EC(3) = CS655_3(2)
+    Soil_T(3) = CS655_3(3)
+    Soil_P(3) = CS655_3(4)
+    Soil_PA(3) = CS655_3(5)
+    Soil_VR(3) = CS655_3(6)
+    Soil_VWC(4) = CS655_4(1)
+    Soil_EC(4) = CS655_4(2)
+    Soil_T(4) = CS655_4(3)
+    Soil_P(4) = CS655_4(4)
+    Soil_PA(4) = CS655_4(5)
+    Soil_VR(4) = CS655_4(6)
+    Soil_VWC(1) = Soil_VWC1 'dummy up variables until new CS655s are installed
+    Soil_VWC(2) = Soil_VWC(1)
+
+    'Measure temperatures
+    TCDiff (TC_LoadCell1,1,mV20c,1,TypeT,PTemp,True ,0,250,1.0,0)
+    TCDiff (TC_LoadCell2,1,mV20c,2,TypeT,PTemp,True ,0,250,1.0,0)
+    TCDiff (TC_3,1,mV20c,3,TypeT,PTemp,True ,0,250,1.0,0)
+
+    'Tare lysimeters
+    Lys1_Mass_gm = mV1_avg * LC1_mult - Tare1_gm
+    If (Tare1 = TRUE) Then
+      Tare1_gm = mV1_avg * LC1_mult
+      Tare1 = False
+      Call SendLog ("Tare Lys 1 was reset")
+      Call SendLog ("Tare 1 (gm) =" + FormatFloat(Tare1_gm,"%8.1f"))
+      Call Update_CurrentFile()
+    EndIf
+
+    Lys2_Mass_gm = mV2_avg * LC2_mult - Tare2_gm
+    If (Tare2 = TRUE) Then
+      Tare2_gm = mV2_avg * LC2_mult
+      Tare2 = False
+      Call SendLog ("Tare Lys 2 was reset")
+      Call SendLog ("Tare 2 (gm) =" + FormatFloat(Tare2_gm,"%8.1f"))
+      Call Update_CurrentFile()
+    EndIf
+
+    'Compute lysimeter mass flux
+    Lys1_Flux_mm = Lys1_Mass_gm / Lys1_Area_cm2 * 10  'gm * 1 cc/gm / cm^2 * 10mm/cm
+    Lys2_Flux_mm = Lys2_Mass_gm / Lys2_Area_cm2 * 10
+
+    'Compute lysimeter ET flux
+    Lys1_ET_Flux_mm = Lys1_Flux_mm + Lys1_Drain_Flux_mm
+    Lys2_ET_Flux_mm = Lys2_Flux_mm + Lys2_Drain_Flux_mm
+
+    If (FirstPass) Then
+
+      Call SendLog ("Initial Cum_Drain1_ml =" + FormatFloat(cum_Drain1_ml,"%5.2f"))
+      Call SendLog ("Initial Cum_Drain2_ml =" + FormatFloat(cum_Drain2_ml,"%5.2f"))
+    EndIf
+    
+   FirstPass = False
+
+    CallTable TenSec  'only written during calibration
+    CallTable FifteenMin
+    CallTable Daily
+
+    Pump_Ready = False
+
+  NextScan
+EndProg
+

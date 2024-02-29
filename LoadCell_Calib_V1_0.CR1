@@ -1,0 +1,61 @@
+'CR1000 Series Datalogger
+
+'This program wil read full bridge loadcell and report user enter
+' know mass and loadcell every 10 seconds
+
+Public Calib As Boolean
+Public mult, offset
+Public PTemp, Batt_volt
+Public LC_mV, known_mass, LC_temp
+Public mV(100),i
+
+
+'Declare Private Variables
+'Example:
+'Dim Counter
+
+'Define Data Tables.
+DataTable (Ten_sec,Calib,-1) 'Set table size to # of records, or -1 to autoallocate.
+	DataInterval (0,10,Sec,10)
+	Sample (1,LC_mV,IEEE4)
+	Sample (1,known_mass,FP2)
+	Sample (1,LC_temp,FP2)
+	Sample (1,PTemp,FP2)
+	Sample (1,mult,FP2)
+	Sample (1,offset,FP2)
+EndTable
+
+DataTable (Ten_min,1,-1) 'Set table size to # of records, or -1 to autoallocate.
+	DataInterval (0,10,Min,10)
+	Sample (1,LC_mV,IEEE4)
+	Sample (1,known_mass,FP2)
+	Sample (1,LC_temp,FP2)
+	Sample (1,PTemp,FP2)
+	Sample (1,mult,FP2)
+	Sample (1,offset,FP2)
+EndTable
+
+
+'Main Program
+BeginProg
+  mult = 1.0
+  offset = 0.0
+	Scan (10,Sec,0,0)
+		PanelTemp (PTemp,60)
+		Battery (Batt_volt)
+		
+		TCDiff (LC_temp,1,mV2_5C,2,TypeT,PTemp,True ,0,250,1.0,0)
+		
+		For i=1 To 100
+      BrFull (mV(),1,Autorange,1,Vx1,1,2500,True ,True ,0,250,-1000.0,0)
+    Next i
+    AvgSpa(LC_mV,100,mV())
+    
+    LC_mV = LC_mV * mult + offset
+    
+		CallTable Ten_sec
+		CallTable Ten_min
+		
+	NextScan
+EndProg
+
