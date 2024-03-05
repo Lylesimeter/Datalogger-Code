@@ -9,4 +9,4 @@ Current conditions are written to a text file on the CPU drive of the datalogger
 
 Set the boolean variable "calib" = TRUE during lysimeter calibration; this will record values avery 10-seconds during the active calibration of the lysimeter.  Otherwise leave the boolean variable = FALSE to save memory on the datalogger.
 
-Also included is an similar example program for the CR3000 datalogger, and a load cell calibration program for the CR1000X.
+Also included is an similar example program for the CR3000 datalogger, and  load cell calibration programs for the CR1000X and CR1000.
