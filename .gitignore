@@ -1,0 +1,2 @@
+#gitignore file to remove any unwanted binaries from this repository
+*.fgc
